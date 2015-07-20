@@ -88,7 +88,9 @@ struct _LightTask
 	guint state_changed_tag;
 	guint button_resized_tag;
 	guint button_resized_check_tag;
+	
 	XWindowAttributes attr;
+	gboolean redirected;
 	
 	
 };
@@ -176,7 +178,6 @@ static void light_task_finalize (GObject *object)
 	}
 	
 	
-	
 	if (task->window)
 	{
 		g_object_unref (task->window);
@@ -208,6 +209,8 @@ light_task_new_from_window (MyTasklist *tasklist, WnckWindow *window)
 	task->window = g_object_ref (window);
 	
 	task->xid = wnck_window_get_xid (window);
+	
+	task->redirected = FALSE;
 	
 	light_task_create_widgets (task);
 	
@@ -637,6 +640,7 @@ lightdash_window_switcher_get_window_picture (LightTask *task)
 	
 			XCompositeRedirectWindow (task->tasklist->dpy, task->xid,
 				CompositeRedirectAutomatic);
+			task->redirected = TRUE;
 				
 			task->pixmap = None;
 			
@@ -683,7 +687,9 @@ static void light_task_create_widgets (LightTask *task)
 	if (task->tasklist->composited)
 	{
 		
-		if (!wnck_window_is_minimized (task->window))
+		if (!wnck_window_is_minimized (task->window) 
+			&& wnck_window_is_on_workspace (task->window, 
+				wnck_screen_get_active_workspace(task->tasklist->screen)))
 		{
 			task->gdk_window = gdk_x11_window_foreign_new_for_display 
 				(gdk_screen_get_display (task->tasklist->gdk_screen),
