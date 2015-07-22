@@ -26,6 +26,7 @@
 #include <cairo/cairo.h>
 #include <gdk/gdk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <gdk-pixbuf-xlib/gdk-pixbuf-xlib.h>
 #include "window-switcher.h"
 
 #define TABLE_COLUMNS 3
@@ -133,7 +134,7 @@ static void light_task_class_init (LightTaskClass *klass)
 static void light_task_init (LightTask *task)
 
 {
-	
+	task->pixmap = None;
 }
 
 static void light_task_finalize (GObject *object)
@@ -194,6 +195,18 @@ static void light_task_finalize (GObject *object)
 	{
 		g_object_unref (task->scaled_screenshot);
 		task->scaled_screenshot = NULL;
+	}
+	
+	if (task->pixmap != None)
+	{
+		XFreePixmap (task->tasklist->dpy, task->pixmap);
+		task->pixmap = None;
+	}
+	
+	if (task->redirected && task->window != None)
+	{
+		XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
+				CompositeRedirectAutomatic);
 	}
 	
 }
@@ -548,6 +561,7 @@ static void my_tasklist_button_emit_click_signal (GtkButton *button, MyTasklist 
 	
 }
 
+/*
 void taskview_button_check_allocate_signal (GtkWidget *widget, GdkRectangle *allocation,
 	LightTask *task)
 {
@@ -579,20 +593,16 @@ void taskview_button_size_changed (GtkWidget *widget, GdkRectangle *allocation,
 		
 		gfloat aspect_ratio = widthp/heightp;
 		
-		g_print ("%f", aspect_ratio);
-		g_print ("%s", " ");
 	
 		
 		task->scaled_screenshot = gdk_pixbuf_scale_simple (task->screenshot,
 		task->button->allocation.height*aspect_ratio, task->button->allocation.height, GDK_INTERP_BILINEAR);
 		
 		gtk_image_set_from_pixbuf (task->icon, task->scaled_screenshot);
-	
-		g_print ("%s", "allocate");
 	}
 	
 	}
-}
+}*/
 
 static void my_tasklist_drag_begin_handl
 (GtkWidget *widget, GdkDragContext *context, LightTask *task)
@@ -640,9 +650,10 @@ lightdash_window_switcher_get_window_picture (LightTask *task)
 	
 			XCompositeRedirectWindow (task->tasklist->dpy, task->xid,
 				CompositeRedirectAutomatic);
+				
 			task->redirected = TRUE;
 				
-			task->pixmap = None;
+			
 			
 			task->pixmap = XCompositeNameWindowPixmap (task->tasklist->dpy, task->xid);
 			
@@ -691,40 +702,25 @@ static void light_task_create_widgets (LightTask *task)
 			&& wnck_window_is_on_workspace (task->window, 
 				wnck_screen_get_active_workspace(task->tasklist->screen)))
 		{
-			task->gdk_window = gdk_x11_window_foreign_new_for_display 
-				(gdk_screen_get_display (task->tasklist->gdk_screen),
-					wnck_window_get_xid (task->window));
+			
 		
 			gdk_drawable_get_size (task->gdk_window, &widthp, &heightp);
 		
 			task->origin = lightdash_window_switcher_get_window_picture (task);
-				
 			
 			
-			//GdkPixmap *pixmap = gdk_pixmap_new(NULL, task->attr.width, task->attr.height, 24);
+
 			
-			//int scr = DefaultScreen (task->tasklist->dpy);
-			//cairo_t *cr = cairo_xlib_surface_create (task->origin, DefaultRootWindow (task->tasklist->dpy),
-				//DefaultVisual (task->tasklist->dpy, scr), DisplayHeight (task->tasklist->dpy, scr));
-				
-			//cairo_surface_t *surface_source = cairo_image_surface_create_for_data
-				//((unsigned char *) (task->origin), CAIRO_FORMAT_RGB24, task->attr.width, 
-					//task->attr.height, 2);
-			
-					
-			//cairo_t *cr = gdk_cairo_create (pixmap);
-			//cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
-			
-			//cairo_set_source_surface (cr, surface_source, task->attr.width, task->attr.height);
-			//cairo_rectangle (cr, 0, 0, task->attr.width, task->attr.height);
-			//cairo_fill (cr);
-	
+			GdkPixmap *pixmap;
+			pixmap = gdk_pixmap_foreign_new_for_screen (task->tasklist->gdk_screen, task->pixmap,
+				task->attr.width, task->attr.height, task->attr.depth);
 			
 		
 			g_hash_table_insert (task->tasklist->previews, task->window, task->screenshot);
 	
 		
-			//task->icon = gtk_image_new_from_pixmap (pixmap, NULL);
+			task->icon = gtk_image_new_from_pixmap (pixmap, NULL);
+			//task->icon = gtk_image_new_from_pixbuf (pixbuf);
 	
 		}
 	
