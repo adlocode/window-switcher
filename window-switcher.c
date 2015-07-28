@@ -18,15 +18,8 @@
 #include <gtk/gtk.h>
 #include <libwnck/libwnck.h>
 #include <X11/Xlib.h>
-
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xrender.h>
-
-#include <X11/Xutil.h>
-#include <cairo/cairo.h>
-#include <gdk/gdk.h>
-#include <gdk-pixbuf/gdk-pixbuf.h>
-#include <gdk-pixbuf-xlib/gdk-pixbuf-xlib.h>
 #include "window-switcher.h"
 
 #define TABLE_COLUMNS 3
@@ -37,7 +30,8 @@
  */
 
 static void my_tasklist_update_windows (MyTasklist *tasklist);
-static void taskview_on_window_opened (WnckScreen *screen, WnckWindow *window, MyTasklist *tasklist);
+static void my_tasklist_on_window_opened (WnckScreen *screen, WnckWindow *window, MyTasklist *tasklist);
+static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window, MyTasklist *tasklist);
 static void my_tasklist_active_workspace_changed
 	(WnckScreen *screen, WnckWorkspace *previously_active_workspace, MyTasklist *tasklist);
 static void my_tasklist_on_name_changed (WnckWindow *window, GtkWidget *label);
@@ -47,13 +41,15 @@ static void my_tasklist_window_state_changed
 static void my_tasklist_screen_composited_changed (GdkScreen *screen, MyTasklist *tasklist);
 static void my_tasklist_button_clicked (GtkButton *button, WnckWindow *window);
 static void my_tasklist_button_emit_click_signal (GtkButton *button, MyTasklist *tasklist);
-
+static void my_tasklist_free_skipped_windows (MyTasklist *tasklist);
 
 #define LIGHT_TASK_TYPE (light_task_get_type())
 #define LIGHT_TASK(obj) (G_TYPE_CHECK_INSTANCE_CAST ((obj), LIGHT_TASK_TYPE, LightTask))
 #define LIGHT_TASK_CLASS (klass) (G_TYPE_CHECK_CLASS_CAST ((klass), LIGHT_TASK_TYPE, LightTaskClass))
 #define IS_LIGHT_TASK (obj) (G_TYPE_CHECK_INSTANCE_TYPE ((obj), LIGHT_TASK_TYPE))
 #define IS_LIGHT_TASK_CLASS(klass), (G_TYPE_CHECK_CLASS_TYPE ((klass), LIGHT_TASK_TYPE))
+
+GType light_task_get_type (void);
 
 typedef struct _LightTask LightTask;
 typedef struct _LightTaskClass LightTaskClass;
@@ -64,7 +60,6 @@ struct _LightTask
 	
 	MyTasklist *tasklist;
 	
-	GtkWidget *aspect_frame;
 	GtkWidget *button;
 	GtkWidget *icon;
 	GtkWidget *label;
@@ -72,26 +67,17 @@ struct _LightTask
 	
 	WnckWindow *window;
 	Window xid;
-	
-	XRenderPictFormat *format;
-	Picture origin, destination;
-	GdkWindow *gdk_window;
 	const GtkTargetEntry target;
 	GdkPixbuf *pixbuf;
 	
 	Pixmap pixmap;
-	GdkPixbuf *screenshot;
-	GdkPixbuf *scaled_screenshot;
 	
 	guint name_changed_tag;
 	guint icon_changed_tag;
 	guint workspace_changed_tag;
 	guint state_changed_tag;
-	guint button_resized_tag;
-	guint button_resized_check_tag;
 	
 	XWindowAttributes attr;
-	gboolean redirected;
 	
 	
 };
@@ -119,9 +105,6 @@ static void light_task_create_widgets (LightTask *task);
 static void my_tasklist_drag_data_get_handl
 		(GtkWidget *widget, GdkDragContext *context, GtkSelectionData *selection_data,
         guint target_type, guint time, LightTask *task);
-        
-void taskview_button_size_changed (GtkWidget *widget, GdkRectangle *allocation,
-	LightTask *task);
 
 static void light_task_class_init (LightTaskClass *klass)
 
@@ -134,14 +117,13 @@ static void light_task_class_init (LightTaskClass *klass)
 static void light_task_init (LightTask *task)
 
 {
-	task->pixmap = None;
+	
 }
 
 static void light_task_finalize (GObject *object)
 {
 	LightTask *task;
 	task = LIGHT_TASK (object);
-	
 	if (task->button)
 	{
 		gtk_widget_destroy (task->button);
@@ -185,30 +167,6 @@ static void light_task_finalize (GObject *object)
 		task->window = NULL;
 	}
 	
-	if (task->screenshot)
-	{
-		g_object_unref (task->screenshot);
-		task->screenshot = NULL;
-	}
-	
-	if (task->scaled_screenshot)
-	{
-		g_object_unref (task->scaled_screenshot);
-		task->scaled_screenshot = NULL;
-	}
-	
-	if (task->pixmap != None)
-	{
-		XFreePixmap (task->tasklist->dpy, task->pixmap);
-		task->pixmap = None;
-	}
-	
-	if (task->redirected && task->window != None)
-	{
-		XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
-				CompositeRedirectAutomatic);
-	}
-	
 }
 
 static LightTask *
@@ -222,8 +180,6 @@ light_task_new_from_window (MyTasklist *tasklist, WnckWindow *window)
 	task->window = g_object_ref (window);
 	
 	task->xid = wnck_window_get_xid (window);
-	
-	task->redirected = FALSE;
 	
 	light_task_create_widgets (task);
 	
@@ -283,7 +239,7 @@ GType my_tasklist_get_type (void)
 
 static void my_tasklist_class_init (MyTasklistClass *klass)
 
-{
+{	
 	task_button_clicked_signals [TASK_BUTTON_CLICKED_SIGNAL] = 
 		g_signal_new ("task-button-clicked",
 		G_TYPE_FROM_CLASS(klass),
@@ -321,7 +277,10 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	tasklist->tasks = NULL;
 	tasklist->skipped_windows = NULL;
 	
-	tasklist->previews = g_hash_table_new (NULL, NULL);
+	tasklist->left_attach =0;	
+	tasklist->right_attach=1;		
+	tasklist->top_attach=0;		
+	tasklist->bottom_attach=1;
 	
 	tasklist->table = gtk_table_new (3, TABLE_COLUMNS, TRUE);
 	gtk_container_add (GTK_CONTAINER(tasklist), tasklist->table);
@@ -329,28 +288,26 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	
 	gtk_widget_show (tasklist->table);
 	tasklist->screen = wnck_screen_get_default();
-	tasklist->gdk_screen = gdk_screen_get_default();
-	
+	tasklist->gdk_screen = gdk_screen_get_default ();
 	tasklist->dpy = gdk_x11_get_default_xdisplay ();
 	
 	tasklist->composited = gdk_screen_is_composited (tasklist->gdk_screen);
 	
 	wnck_screen_force_update (tasklist->screen);
 	
-	
 	my_tasklist_update_windows (tasklist);
 	
 	g_signal_connect (tasklist->screen, "window-opened",
-                G_CALLBACK (taskview_on_window_opened), tasklist); 
+                G_CALLBACK (my_tasklist_on_window_opened), tasklist); 
                 
     g_signal_connect (tasklist->screen, "window-closed",
-                G_CALLBACK (taskview_on_window_opened), tasklist); 
+                G_CALLBACK (my_tasklist_on_window_closed), tasklist); 
                 
    g_signal_connect (tasklist->screen, "active-workspace-changed",
                G_CALLBACK (my_tasklist_active_workspace_changed), tasklist);
                
    g_signal_connect (tasklist->gdk_screen, "composited-changed",
-               G_CALLBACK (my_tasklist_screen_composited_changed), tasklist);            
+               G_CALLBACK (my_tasklist_screen_composited_changed), tasklist);           
 
 }
 
@@ -375,24 +332,6 @@ my_tasklist_free_tasks (MyTasklist *tasklist)
 			
 			l = l->next;
 			
-			
-			
-			if (task->button_resized_tag)
-			{
-				g_signal_handler_disconnect (task->button,
-							task->button_resized_tag);
-							
-				task->button_resized_tag = 0;
-			}
-			
-			if (task->button_resized_check_tag)
-			{
-				g_signal_handler_disconnect (task->button,
-							task->button_resized_check_tag);
-							
-				task->button_resized_check_tag = 0;
-			}
-			
 			if (task->button)
 			{	
 				gtk_widget_destroy (task->button);
@@ -404,10 +343,17 @@ my_tasklist_free_tasks (MyTasklist *tasklist)
 			
 		}
 	}
+
+	g_list_free (tasklist->tasks);
 	tasklist->tasks = NULL;
-	g_assert (tasklist->tasks == NULL);
+	my_tasklist_free_skipped_windows (tasklist);
 	
-	//Free skipped windows
+}
+
+static void
+my_tasklist_free_skipped_windows (MyTasklist *tasklist)
+
+{	
 	
 	if (tasklist->skipped_windows)
 	
@@ -423,31 +369,55 @@ my_tasklist_free_tasks (MyTasklist *tasklist)
 			g_free (skipped);
 			skipped_l = skipped_l->next;
 		}
-	
+		
 		g_list_free (tasklist->skipped_windows);
 		tasklist->skipped_windows = NULL;
+	
+
 		
 	}
 	
 }
 
+static void my_tasklist_attach_widget (LightTask *task, MyTasklist *tasklist)
+{
+	gtk_table_attach_defaults (GTK_TABLE(tasklist->table), task->button, tasklist->left_attach, 
+						tasklist->right_attach, tasklist->top_attach, tasklist->bottom_attach);
+					
+					gtk_widget_show_all (task->button);
+					
+					
+					if (tasklist->right_attach % TABLE_COLUMNS == 0)
+					{
+						tasklist->top_attach++;
+						tasklist->bottom_attach++;
+						tasklist->left_attach=0;
+						tasklist->right_attach=1;
+					}
+				
+					else
+					{
+						tasklist->left_attach++;
+						tasklist->right_attach++;
+					}
+}
+
 static void my_tasklist_update_windows (MyTasklist *tasklist)
 {
-	my_tasklist_free_tasks (tasklist);
-	gtk_table_resize (GTK_TABLE(tasklist->table), 3, TABLE_COLUMNS);
-	
 	GList *window_l;
 	WnckWindow *win;
-	
-
 	
 	
 	//Table attachment values
 	
-	guint left_attach =0;	
-	guint right_attach=1;		
-	guint top_attach=0;		
-	guint bottom_attach=1;
+	tasklist->left_attach =0;	
+	tasklist->right_attach=1;		
+	tasklist->top_attach=0;		
+	tasklist->bottom_attach=1;
+	
+	my_tasklist_free_tasks (tasklist);
+	gtk_table_resize (GTK_TABLE(tasklist->table), 3, TABLE_COLUMNS);
+	
 	
 	
 	for (window_l = wnck_screen_get_windows (tasklist->screen); window_l != NULL; window_l = window_l->next)
@@ -456,33 +426,16 @@ static void my_tasklist_update_windows (MyTasklist *tasklist)
 		
 		if (!(wnck_window_is_skip_tasklist (win)))
 		{
-			LightTask *task = light_task_new_from_window (tasklist, win);
-			tasklist->tasks = g_list_prepend (tasklist->tasks, task);
+			LightTask *task;
 			
+			task = light_task_new_from_window (tasklist, win);
+	
+			tasklist->tasks = g_list_prepend (tasklist->tasks, task);
 			
 			if(wnck_window_is_on_workspace(task->window, wnck_screen_get_active_workspace(tasklist->screen)))
 			{
 				
-				
-				gtk_table_attach_defaults (GTK_TABLE(tasklist->table), task->button, left_attach, 
-					right_attach, top_attach, bottom_attach);
-					
-				gtk_widget_show_all (task->button);
-					
-					
-				if (right_attach % TABLE_COLUMNS == 0)
-				{
-					top_attach++;
-					bottom_attach++;
-					left_attach=0;
-					right_attach=1;
-				}
-				
-				else
-				{
-					left_attach++;
-					right_attach++;
-				}
+				my_tasklist_attach_widget (task, tasklist);
 				
 			}
 			
@@ -496,10 +449,13 @@ static void my_tasklist_update_windows (MyTasklist *tasklist)
 							G_CALLBACK (my_tasklist_window_state_changed),
 							tasklist);
 							
-			tasklist->skipped_windows =
+		tasklist->skipped_windows =
 				g_list_prepend (tasklist->skipped_windows,
-					(gpointer) skipped);
+					skipped);
+					
 		}
+		
+
 	}
 	
 	
@@ -507,12 +463,44 @@ static void my_tasklist_update_windows (MyTasklist *tasklist)
 
 static void my_tasklist_on_name_changed (WnckWindow *window, GtkWidget *label) 
 {
-	gtk_label_set_text (GTK_LABEL(label), wnck_window_get_name (window));
+	const gchar *name;
+	name = wnck_window_get_name (window);
+	gtk_label_set_text (GTK_LABEL(label), name);
 }
 
-static void taskview_on_window_opened (WnckScreen *screen, WnckWindow *window, MyTasklist *tasklist)
+static void my_tasklist_on_window_opened (WnckScreen *screen, WnckWindow *window, MyTasklist *tasklist)
 {
-	my_tasklist_update_windows (tasklist);
+	LightTask *task;
+	
+	if (wnck_window_is_skip_tasklist (window))
+	{
+		skipped_window *skipped = g_new0 (skipped_window, 1);
+			skipped->window = g_object_ref (window);
+			skipped->tag = g_signal_connect (G_OBJECT (window), "state-changed",
+							G_CALLBACK (my_tasklist_window_state_changed),
+							tasklist);
+							
+		tasklist->skipped_windows =
+				g_list_prepend (tasklist->skipped_windows,
+					skipped);
+		return;
+	}
+	
+	task = light_task_new_from_window (tasklist, window);
+	
+	tasklist->tasks = g_list_prepend (tasklist->tasks, task);
+	
+	if(wnck_window_is_on_workspace(task->window, wnck_screen_get_active_workspace(tasklist->screen)))
+	{
+		my_tasklist_attach_widget (task, tasklist);
+	}
+						
+
+}
+
+static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window, MyTasklist *tasklist)
+{
+	my_tasklist_update_windows (tasklist);	
 }
 
 static void my_tasklist_active_workspace_changed
@@ -528,9 +516,7 @@ static void my_tasklist_window_workspace_changed (WnckWindow *window, MyTasklist
 
 static void my_tasklist_screen_composited_changed (GdkScreen *screen, MyTasklist *tasklist)
 {
-	
 	tasklist->composited = gdk_screen_is_composited (tasklist->gdk_screen);
-
 }
 
 static void my_tasklist_window_state_changed
@@ -540,11 +526,11 @@ static void my_tasklist_window_state_changed
 	{
 		my_tasklist_update_windows (tasklist);
 	}
+	
 	else if (changed_mask & WNCK_WINDOW_STATE_MINIMIZED)
 	{
 		my_tasklist_update_windows (tasklist);
 	}
-	
 }
 
 
@@ -560,49 +546,6 @@ static void my_tasklist_button_emit_click_signal (GtkButton *button, MyTasklist 
 	g_signal_emit_by_name (tasklist, "task-button-clicked");
 	
 }
-
-/*
-void taskview_button_check_allocate_signal (GtkWidget *widget, GdkRectangle *allocation,
-	LightTask *task)
-{
-	if (!g_signal_handler_is_connected (task->button, task->button_resized_tag))
-		
-	{
-		task->button_resized_tag = g_signal_connect (task->button, "size-allocate",
-					G_CALLBACK (taskview_button_size_changed), task);
-	}
-}
-
-void taskview_button_size_changed (GtkWidget *widget, GdkRectangle *allocation,
-	LightTask *task)
-{
-	if (task->screenshot)
-	{
-		if (g_signal_handler_is_connected (task->button, task->button_resized_tag))
-		
-	{
-		g_signal_handler_disconnect (task->button, task->button_resized_tag);
-		if (task->scaled_screenshot)
-		g_object_unref (task->scaled_screenshot);
-		
-		
-		gfloat xp, yp, widthp, heightp;
-		gint depth;
-	
-		gdk_window_get_geometry (task->gdk_window, &xp, &yp, &widthp, &heightp, &depth);
-		
-		gfloat aspect_ratio = widthp/heightp;
-		
-	
-		
-		task->scaled_screenshot = gdk_pixbuf_scale_simple (task->screenshot,
-		task->button->allocation.height*aspect_ratio, task->button->allocation.height, GDK_INTERP_BILINEAR);
-		
-		gtk_image_set_from_pixbuf (task->icon, task->scaled_screenshot);
-	}
-	
-	}
-}*/
 
 static void my_tasklist_drag_begin_handl
 (GtkWidget *widget, GdkDragContext *context, LightTask *task)
@@ -621,9 +564,11 @@ my_tasklist_drag_data_get_handl
 (GtkWidget *widget, GdkDragContext *context, GtkSelectionData *selection_data,
         guint target_type, guint time, LightTask *task)
 {
+	gulong xid;
+	
 	g_assert (selection_data != NULL);
 	
-	gulong xid;
+	
 	
 	xid = wnck_window_get_xid (task->window);
 	 
@@ -641,107 +586,56 @@ my_tasklist_drag_data_get_handl
      
         
 }
-
-static Picture
+static void
 lightdash_window_switcher_get_window_picture (LightTask *task)
 {
-	XRenderPictFormat *format;
-	
-	
-			XCompositeRedirectWindow (task->tasklist->dpy, task->xid,
-				CompositeRedirectAutomatic);
-				
-			task->redirected = TRUE;
-				
-			
-			
-			task->pixmap = XCompositeNameWindowPixmap (task->tasklist->dpy, task->xid);
-			
-			Drawable draw = task->pixmap;
-			
-			if (!draw) draw = task->xid;
-			
-			static XRenderPictureAttributes pa = {.subwindow_mode = IncludeInferiors};
-			
-			task->origin = None;
-			
-			format = XRenderFindVisualFormat (task->tasklist->dpy, task->attr.visual);
-			
-			if (format)
-			{
-				return XRenderCreatePicture (task->tasklist->dpy,
-					draw, format, CPSubwindowMode, &pa);
-			}
-			
-		return None;
+	XCompositeRedirectWindow (task->tasklist->dpy, task->xid,
+		CompositeRedirectAutomatic);
+		
+	task->pixmap = XCompositeNameWindowPixmap (task->tasklist->dpy, task->xid);
 }
 
 static void light_task_create_widgets (LightTask *task)
 {
-	task->label = gtk_label_new_with_mnemonic(wnck_window_get_name (task->window));
-	task->vbox = gtk_vbox_new (FALSE, 0);
-	task->pixbuf = wnck_window_get_icon (task->window);
+	static const GtkTargetEntry targets [] = { {"application/x-wnck-window-id",0,0} };
 	
+	task->label = gtk_label_new (wnck_window_get_name (task->window));
+	
+	task->vbox = gtk_vbox_new (FALSE, 0);
+		
+	task->pixbuf = wnck_window_get_icon (task->window);
 	
 	XGetWindowAttributes (task->tasklist->dpy, task->xid, &task->attr);
 	
-	int xp, yp, widthp, heightp;
-		
-	
-	
-	task->button = gtk_button_new();
-	gtk_label_set_ellipsize(GTK_LABEL(task->label),PANGO_ELLIPSIZE_END);
-	gtk_container_add (GTK_CONTAINER(task->button),task->vbox);
-	gtk_widget_set_size_request (task->button, 200, 80);
-	gtk_button_set_relief (task->button, GTK_RELIEF_NONE);
-	
-	if (task->tasklist->composited)
-	{
-		
-		if (!wnck_window_is_minimized (task->window) 
-			&& wnck_window_is_on_workspace (task->window, 
-				wnck_screen_get_active_workspace(task->tasklist->screen)))
+	if (task->tasklist->composited && !wnck_window_is_minimized (task->window)
+			&& wnck_window_is_on_workspace (task->window,
+				wnck_screen_get_active_workspace (task->tasklist->screen)))
 		{
-			
-		
-			gdk_drawable_get_size (task->gdk_window, &widthp, &heightp);
-		
-			task->origin = lightdash_window_switcher_get_window_picture (task);
-			
-			
-
+			lightdash_window_switcher_get_window_picture (task);
 			
 			GdkPixmap *pixmap;
-			pixmap = gdk_pixmap_foreign_new_for_screen (task->tasklist->gdk_screen, task->pixmap,
-				task->attr.width, task->attr.height, task->attr.depth);
 			
-		
-			g_hash_table_insert (task->tasklist->previews, task->window, task->screenshot);
-	
-		
+			pixmap = gdk_pixmap_foreign_new_for_screen (task->tasklist->gdk_screen, task->pixmap,
+					task->attr.width, task->attr.height, task->attr.depth);
+					
 			task->icon = gtk_image_new_from_pixmap (pixmap, NULL);
-			//task->icon = gtk_image_new_from_pixbuf (pixbuf);
-	
 		}
-	
+		
+		
 		else
 		{
 			task->icon = gtk_image_new_from_pixbuf (task->pixbuf);
+			
 		}
 	
-		}
-	
-	else
-	{
-		task->icon = gtk_image_new_from_pixbuf (task->pixbuf);
-	}
-	
-	
+	task->button = gtk_button_new();
+	gtk_button_set_relief (GTK_BUTTON (task->button), GTK_RELIEF_NONE);
+	gtk_label_set_ellipsize(GTK_LABEL(task->label),PANGO_ELLIPSIZE_END);
+	gtk_container_add (GTK_CONTAINER(task->button),task->vbox);
 	gtk_box_pack_start (GTK_BOX (task->vbox), task->icon, TRUE, TRUE, 0);
-	
-	gtk_box_pack_start (GTK_BOX (task->vbox), task->label, FALSE, TRUE, 1);
-	
-	gtk_widget_set_size_request (task->icon, 100, 100);
+	gtk_box_pack_start (GTK_BOX (task->vbox), task->label, FALSE, TRUE, 0);
+	gtk_widget_set_size_request (task->button, 200, 80);
+	gtk_widget_set_size_request (task->icon, 80, 80);
 	
 	task->icon_changed_tag = g_signal_connect (task->window, "icon-changed",
 					G_CALLBACK (my_tasklist_window_icon_changed), task);
@@ -754,20 +648,7 @@ static void light_task_create_widgets (LightTask *task)
 					
 	task->state_changed_tag = g_signal_connect (task->window, "state-changed",
 					G_CALLBACK (my_tasklist_window_state_changed), task->tasklist);				
-	
-	if (!wnck_window_is_minimized (task->window))
-	{
-		
-		//task->button_resized_check_tag = g_signal_connect (task->button, "size-allocate",
-					//G_CALLBACK (taskview_button_check_allocate_signal), task);
-	
-									
-	//task->button_resized_tag = g_signal_connect (task->button, "size-allocate",
-					//G_CALLBACK (taskview_button_size_changed), task);
 					
-	}
-								
-	static const GtkTargetEntry targets [] = { {"application/x-wnck-window-id",0,0} };
 					
 	gtk_drag_source_set (task->button,GDK_BUTTON1_MASK,targets,1,GDK_ACTION_MOVE);
 					
