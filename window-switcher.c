@@ -20,6 +20,7 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xrender.h>
+#include <X11/extensions/Xdamage.h>
 #include "window-switcher.h"
 
 #define TABLE_COLUMNS 3
@@ -42,6 +43,8 @@ static void my_tasklist_screen_composited_changed (GdkScreen *screen, MyTasklist
 static void my_tasklist_button_clicked (GtkButton *button, WnckWindow *window);
 static void my_tasklist_button_emit_click_signal (GtkButton *button, MyTasklist *tasklist);
 static void my_tasklist_free_skipped_windows (MyTasklist *tasklist);
+static int lightdash_window_switcher_xhandler_xerror (Display *dpy, XErrorEvent *e);
+
 
 #define LIGHT_TASK_TYPE (light_task_get_type())
 #define LIGHT_TASK(obj) (G_TYPE_CHECK_INSTANCE_CAST ((obj), LIGHT_TASK_TYPE, LightTask))
@@ -66,11 +69,16 @@ struct _LightTask
 	GtkWidget *vbox;
 	
 	WnckWindow *window;
+	GdkWindow *gdk_window;
 	Window xid;
 	const GtkTargetEntry target;
 	GdkPixbuf *pixbuf;
 	
 	Pixmap pixmap;
+	
+	GdkPixmap *gdk_pixmap;
+	
+	Damage damage;
 	
 	guint name_changed_tag;
 	guint icon_changed_tag;
@@ -105,6 +113,8 @@ static void light_task_create_widgets (LightTask *task);
 static void my_tasklist_drag_data_get_handl
 		(GtkWidget *widget, GdkDragContext *context, GtkSelectionData *selection_data,
         guint target_type, guint time, LightTask *task);
+
+static void lightdash_window_event (GdkXEvent *xevent, GdkEvent *event, LightTask *task);
 
 static void light_task_class_init (LightTaskClass *klass)
 
@@ -167,6 +177,17 @@ static void light_task_finalize (GObject *object)
 		task->window = NULL;
 	}
 	
+	if (task->damage != None)
+	{
+		XDamageDestroy (task->tasklist->dpy, task->damage);
+		task->damage = None;
+	}
+	
+	
+	gdk_window_remove_filter (task->gdk_window, lightdash_window_event, task);
+	
+	XFreePixmap (task->tasklist->dpy, task->pixmap);
+	
 }
 
 static LightTask *
@@ -176,6 +197,8 @@ light_task_new_from_window (MyTasklist *tasklist, WnckWindow *window)
 	task = g_object_new (LIGHT_TASK_TYPE, NULL);
 	
 	task->tasklist = tasklist;
+	
+	task->damage = None;
 	
 	task->window = g_object_ref (window);
 	
@@ -291,7 +314,14 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	tasklist->gdk_screen = gdk_screen_get_default ();
 	tasklist->dpy = gdk_x11_get_default_xdisplay ();
 	
+	XSetErrorHandler (lightdash_window_switcher_xhandler_xerror);
+	
 	tasklist->composited = gdk_screen_is_composited (tasklist->gdk_screen);
+	
+	int dv, dr;
+	XDamageQueryExtension (tasklist->dpy, &dv, &dr);
+	gdk_x11_register_standard_event_type (gdk_screen_get_display (tasklist->gdk_screen),
+		dv, dv + XDamageNotify);
 	
 	wnck_screen_force_update (tasklist->screen);
 	
@@ -314,6 +344,31 @@ static void my_tasklist_init (MyTasklist *tasklist)
 GtkWidget* my_tasklist_new (void)
 {
 	return GTK_WIDGET(g_object_new (my_tasklist_get_type (), NULL));
+}
+
+static int lightdash_window_switcher_xhandler_xerror (Display *dpy, XErrorEvent *e)
+{
+	if (e->error_code == 151)
+	{
+		g_print ("%s", "X11 error ");
+		g_print ("%d", e->error_code);
+		g_print ("%s", " (BadDamage) \n");
+		return 0;
+	}
+	
+	else if (e->error_code == 4)
+	{
+		g_print ("%s", "X11 error ");
+		g_print ("%d", e->error_code);
+		g_print ("%s", " (BadPixmap) \n");
+		return 0;
+	}
+	
+	g_print ("%s", "X11 error ");
+	g_print ("%d", e->error_code);
+	g_print ("%s", "\n");
+	
+	exit(1);
 }
 
 static void
@@ -595,6 +650,19 @@ lightdash_window_switcher_get_window_picture (LightTask *task)
 	task->pixmap = XCompositeNameWindowPixmap (task->tasklist->dpy, task->xid);
 }
 
+static void lightdash_window_event (GdkXEvent *xevent, GdkEvent *event, LightTask *task)
+{
+	int dv, dr;
+	XDamageQueryExtension (task->tasklist->dpy, &dv, &dr);
+	XEvent *ev = (XEvent*)xevent;
+	//XEvent ev;
+	//XNextEvent (task->tasklist->dpy, &ev);
+	if (ev->type == dv + XDamageNotify)
+	{
+	g_print ("%s", "event");
+	gtk_image_set_from_pixmap (task->icon, task->gdk_pixmap, NULL);
+	}
+}
 static void light_task_create_widgets (LightTask *task)
 {
 	static const GtkTargetEntry targets [] = { {"application/x-wnck-window-id",0,0} };
@@ -607,18 +675,28 @@ static void light_task_create_widgets (LightTask *task)
 	
 	XGetWindowAttributes (task->tasklist->dpy, task->xid, &task->attr);
 	
+	task->gdk_window = gdk_x11_window_foreign_new_for_display 
+		(gdk_screen_get_display (task->tasklist->gdk_screen), task->xid);
+		
+	
+	
 	if (task->tasklist->composited && !wnck_window_is_minimized (task->window)
 			&& wnck_window_is_on_workspace (task->window,
 				wnck_screen_get_active_workspace (task->tasklist->screen)))
 		{
 			lightdash_window_switcher_get_window_picture (task);
 			
-			GdkPixmap *pixmap;
 			
-			pixmap = gdk_pixmap_foreign_new_for_screen (task->tasklist->gdk_screen, task->pixmap,
+			
+			task->gdk_pixmap = gdk_pixmap_foreign_new_for_screen (task->tasklist->gdk_screen, task->pixmap,
 					task->attr.width, task->attr.height, task->attr.depth);
 					
-			task->icon = gtk_image_new_from_pixmap (pixmap, NULL);
+			task->icon = gtk_image_new_from_pixmap (task->gdk_pixmap, NULL);
+			
+			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
+			
+
+			gdk_window_add_filter (task->gdk_window, lightdash_window_event, task);
 		}
 		
 		
