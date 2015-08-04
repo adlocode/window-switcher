@@ -368,7 +368,7 @@ static int lightdash_window_switcher_xhandler_xerror (Display *dpy, XErrorEvent 
 	g_print ("%d", e->error_code);
 	g_print ("%s", "\n");
 	
-	exit(1);
+	//exit(1);
 }
 
 static void
@@ -660,7 +660,7 @@ static void lightdash_window_event (GdkXEvent *xevent, GdkEvent *event, LightTas
 	if (ev->type == dv + XDamageNotify)
 	{
 	g_print ("%s", "event");
-	gtk_image_set_from_pixmap (task->icon, task->gdk_pixmap, NULL);
+	//gtk_image_set_from_pixmap (task->icon, task->gdk_pixmap, NULL);
 	}
 }
 static void light_task_create_widgets (LightTask *task)
@@ -691,7 +691,34 @@ static void light_task_create_widgets (LightTask *task)
 			task->gdk_pixmap = gdk_pixmap_foreign_new_for_screen (task->tasklist->gdk_screen, task->pixmap,
 					task->attr.width, task->attr.height, task->attr.depth);
 					
+			GdkPixbuf *pixbuf;
+				
+			cairo_t *cr;
+
+			task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width/2, task->attr.height/2, 24);
+			
+			cr = gdk_cairo_create (task->gdk_pixmap);
+				
+			cairo_scale (cr, 0.5, 0.5);	
+			
+			
+			cairo_surface_t *s = cairo_xlib_surface_create (task->tasklist->dpy,
+				task->pixmap,
+				DefaultVisual (task->tasklist->dpy, DefaultScreen (task->tasklist->dpy)),
+				task->attr.width,
+				task->attr.height);
+			
+			cairo_rectangle (cr, 0, 0, task->attr.width, task->attr.height);			
+			
+			cairo_set_source_surface (cr, s, 0, 0);
+			
+			
+			cairo_fill (cr);
+			
+					
 			task->icon = gtk_image_new_from_pixmap (task->gdk_pixmap, NULL);
+			
+			cairo_surface_destroy (s);
 			
 			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
 			
