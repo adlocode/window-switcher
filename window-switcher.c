@@ -24,6 +24,7 @@
 #include <gdk/gdkx.h>
 #include <cairo/cairo.h>
 #include <cairo/cairo-xlib.h>
+#include <cairo/cairo-xlib-xrender.h>
 #include <stdlib.h>
 #include "window-switcher.h"
 
@@ -191,6 +192,9 @@ static void light_task_finalize (GObject *object)
 	gdk_window_remove_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);
 	
 	XFreePixmap (task->tasklist->dpy, task->pixmap);
+	
+	XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
+		CompositeRedirectAutomatic);
 	
 }
 
@@ -388,7 +392,7 @@ static int lightdash_window_switcher_xhandler_xerror (Display *dpy, XErrorEvent 
 	g_print ("%d", e->error_code);
 	g_print ("%s", "\n");
 	
-	exit(1);
+	//exit(1);
 }
 
 static void
@@ -706,22 +710,37 @@ static void light_task_create_widgets (LightTask *task)
 		{
 			lightdash_window_switcher_get_window_picture (task);
 			
+			XRenderPictFormat *format = None;
+			if (task->attr.depth == 32)
+			{
+				format = XRenderFindStandardFormat (task->tasklist->dpy, 0);
+			}
+			else
+			{
+				format = XRenderFindStandardFormat (task->tasklist->dpy, 1);
+			}
+			
+			XRenderPictureAttributes pa;
+			pa.subwindow_mode = IncludeInferiors;
 				
 			cairo_t *cr;
 
-			task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width/2, task->attr.height/2, 24);
+			task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width/3, task->attr.height/3, 24);
 			
 			cr = gdk_cairo_create (task->gdk_pixmap);
 			
 			
-			cairo_surface_t *s = cairo_xlib_surface_create (task->tasklist->dpy,
+			cairo_surface_t *s = cairo_xlib_surface_create_with_xrender_format (task->tasklist->dpy,
 				task->pixmap,
-				DefaultVisual (task->tasklist->dpy, DefaultScreen (task->tasklist->dpy)),
+				task->attr.screen,
+				format,
 				task->attr.width,
 				task->attr.height);
+				
+			g_print ("%d", cairo_xlib_surface_get_depth (s));
 			
 			
-			cairo_scale (cr, 0.5, 0.5);
+			cairo_scale (cr, 0.333, 0.333);
 
 			
 
@@ -735,6 +754,8 @@ static void light_task_create_widgets (LightTask *task)
 			task->icon = gtk_image_new_from_pixmap (task->gdk_pixmap, NULL);
 			
 			cairo_surface_destroy (s);
+			
+			cairo_destroy (cr);
 			
 			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
 			
