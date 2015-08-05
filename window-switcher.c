@@ -660,8 +660,6 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		
 		gfloat factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
 		
-		g_print ("%f", factor);
-		
 		cairo_t *cr;
 		
 		g_object_unref (task->gdk_pixmap);
@@ -678,7 +676,7 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 			
 		cairo_fill (cr);
 		
-		gtk_image_set_from_pixmap (task->icon, task->gdk_pixmap, NULL);
+		gtk_image_set_from_pixmap (GTK_IMAGE (task->icon), task->gdk_pixmap, NULL);
 		
 		cairo_destroy (cr);
 		
@@ -779,9 +777,6 @@ static void light_task_create_widgets (LightTask *task)
 			{
 				format = XRenderFindStandardFormat (task->tasklist->dpy, 1);
 			}
-			
-			XRenderPictureAttributes pa;
-			pa.subwindow_mode = IncludeInferiors;
 				
 			cairo_t *cr;
 
@@ -796,8 +791,6 @@ static void light_task_create_widgets (LightTask *task)
 				format,
 				task->attr.width,
 				task->attr.height);
-				
-			g_print ("%d", cairo_xlib_surface_get_depth (task->s));
 			
 			
 			cairo_scale (cr, 0.333, 0.333);
