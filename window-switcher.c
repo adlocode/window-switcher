@@ -378,43 +378,35 @@ GtkWidget* my_tasklist_new (void)
 
 static int lightdash_window_switcher_xhandler_xerror (Display *dpy, XErrorEvent *e)
 {
-	if (e->error_code == 151)
-	{
-		g_print ("%s", "X11 error ");
-		g_print ("%d", e->error_code);
-		g_print ("%s", " (BadDamage) \n");
-		return 0;
-	}
+	gchar text [64];
 	
-	else if (e->error_code == 4)
+	if (e->error_code == 151 
+		|| e->error_code == 4
+		|| e->error_code == 8
+		|| e->error_code == 143
+		|| e->error_code == 143
+		|| e->error_code == 2 
+		|| e->error_code == 3)
+		
 	{
 		g_print ("%s", "X11 error ");
 		g_print ("%d", e->error_code);
-		g_print ("%s", " (BadPixmap) \n");
-		return 0;
-	}
-	
-	else if (e->error_code == 8)
-	{
-		g_print ("%s", "X11 error ");
-		g_print ("%d", e->error_code);
+		g_print ("%s", " - ");
+		XGetErrorText (dpy, e->error_code, text, 64);
+		g_print ("%s", text);
 		g_print ("%s", "\n");
 		return 0;
+	
 	}
 	
-	else if (e->error_code == 143)
-	{
 		g_print ("%s", "X11 error ");
 		g_print ("%d", e->error_code);
+		g_print ("%s", " - ");
+		XGetErrorText (dpy, e->error_code, text, 64);
+		g_print ("%s", text);
 		g_print ("%s", "\n");
-		return 0;
-	}
 	
-	g_print ("%s", "X11 error ");
-	g_print ("%d", e->error_code);
-	g_print ("%s", "\n");
-	
-	//exit(1);
+	exit(1);
 }
 
 static void
