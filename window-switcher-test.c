@@ -53,6 +53,7 @@ int main (int argc, char *argv[])
 		
 	
 	gtk_widget_set_size_request (pager, 100, 100);
+	gtk_widget_set_size_request (tasklist, 500, 400);
 	gtk_widget_set_size_request (button, 20, 20);
 	
 	hbox = gtk_hbox_new (FALSE, 0);
