@@ -222,9 +222,6 @@ static void light_task_finalize (GObject *object)
 	
 	XFreePixmap (task->tasklist->dpy, task->pixmap);
 	
-	XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
-		CompositeRedirectAutomatic);
-	
 	if (task->surface)
 	{	
 		cairo_surface_destroy (task->surface);
@@ -359,6 +356,9 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	
 	tasklist->tasks = NULL;
 	tasklist->skipped_windows = NULL;
+	tasklist->adjusted = FALSE;
+	
+	tasklist->table_columns = 3;
 	
 	tasklist->left_attach =0;	
 	tasklist->right_attach=1;		
@@ -367,7 +367,7 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	
 	
 	
-	tasklist->table = gtk_table_new (3, TABLE_COLUMNS, TRUE);
+	tasklist->table = gtk_table_new (3, tasklist->table_columns, TRUE);
 	gtk_container_add (GTK_CONTAINER(tasklist), tasklist->table);
 	
 	
@@ -510,7 +510,7 @@ static void my_tasklist_attach_widget (LightTask *task, MyTasklist *tasklist)
 					gtk_widget_show_all (task->button);
 					
 					
-					if (tasklist->right_attach % TABLE_COLUMNS == 0)
+					if (tasklist->right_attach % tasklist->table_columns == 0)
 					{
 						tasklist->top_attach++;
 						tasklist->bottom_attach++;
@@ -539,7 +539,7 @@ static void my_tasklist_update_windows (MyTasklist *tasklist)
 	tasklist->bottom_attach=1;
 	
 	my_tasklist_free_tasks (tasklist);
-	gtk_table_resize (GTK_TABLE(tasklist->table), 3, TABLE_COLUMNS);
+	gtk_table_resize (GTK_TABLE(tasklist->table), 3, tasklist->table_columns);
 	
 	
 	
@@ -685,6 +685,7 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 	GdkRectangle *allocation, LightTask *task)
 {
 	gfloat factor;
+	gfloat aspect_ratio;
 	cairo_t *cr;
 	
 	if (task->pixmap && g_signal_handler_is_connected (task->icon, task->button_resized_tag))
@@ -710,6 +711,21 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		gtk_image_set_from_pixmap (GTK_IMAGE (task->icon), task->gdk_pixmap, NULL);
 		
 		cairo_destroy (cr);
+		
+		aspect_ratio = (gfloat)task->button->allocation.width/(gfloat)task->button->allocation.height;
+		
+		if ((aspect_ratio >= 4.0) 
+			&!task->tasklist->adjusted)
+			{
+				task->tasklist->table_columns++;
+				task->tasklist->adjusted = TRUE;
+			}
+		else if ((aspect_ratio < 2.0) 
+			&& task->tasklist->adjusted)
+		{
+				task->tasklist->table_columns--;
+				task->tasklist->adjusted = FALSE;
+		}
 		
 		
 	}	
@@ -780,7 +796,7 @@ static void lightdash_window_event (GdkXEvent *xevent, GdkEvent *event, LightTas
 static void light_task_create_widgets (LightTask *task)
 {
 	XRenderPictFormat *format;
-	cairo_t *cr;
+	//cairo_t *cr;
 	
 	static const GtkTargetEntry targets [] = { {"application/x-wnck-window-id",0,0} };
 	
@@ -795,8 +811,7 @@ static void light_task_create_widgets (LightTask *task)
 	task->gdk_window = gdk_x11_window_foreign_new_for_display 
 		(gdk_screen_get_display (task->tasklist->gdk_screen), task->xid);
 		
-	
-	
+		
 	if (task->tasklist->composited 
 		&& !wnck_window_is_minimized (task->window)
 		&& wnck_window_is_on_workspace (task->window,
@@ -821,7 +836,7 @@ static void light_task_create_widgets (LightTask *task)
 
 			task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width/3, task->attr.height/3, 24);
 			
-			cr = gdk_cairo_create (task->gdk_pixmap);
+			//cr = gdk_cairo_create (task->gdk_pixmap);
 			
 			
 			task->surface = cairo_xlib_surface_create_with_xrender_format (task->tasklist->dpy,
@@ -832,24 +847,27 @@ static void light_task_create_widgets (LightTask *task)
 				task->attr.height);
 			
 			
-			cairo_scale (cr, 0.333, 0.333);
+			//cairo_scale (cr, 0.333, 0.333);
 
 			
 
-			cairo_rectangle (cr, 0, 0, task->attr.width, task->attr.height);
+			//cairo_rectangle (cr, 0, 0, task->attr.width, task->attr.height);
 			
-			cairo_set_source_surface (cr, task->surface, 0, 0);
+			//cairo_set_source_surface (cr, task->surface, 0, 0);
 			
-			cairo_fill (cr);
+			//cairo_fill (cr);
 			
 					
 			task->icon = gtk_image_new_from_pixmap (task->gdk_pixmap, NULL);
 			
 			
 			
-			cairo_destroy (cr);
+			//cairo_destroy (cr);
 			
-			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
+			XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
+				CompositeRedirectAutomatic);
+			
+			//task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
 			
 
 			//gdk_window_add_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);

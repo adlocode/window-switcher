@@ -48,8 +48,12 @@ struct _MyTasklist
 	
 	gboolean composited;
 	
+	gboolean adjusted;
+	
 	GList *tasks;
 	GList *skipped_windows;
+	
+	guint table_columns;
 	
 	guint left_attach;	
 	guint right_attach;		
