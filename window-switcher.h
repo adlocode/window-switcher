@@ -71,7 +71,7 @@ struct _MyTasklistClass
 };
 
 GType my_tasklist_get_type (void);
-GtkWidget* my_tasklist_new (void);
+GtkWidget* lightdash_window_switcher_new (void);
 
 
 

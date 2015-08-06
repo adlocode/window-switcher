@@ -355,6 +355,8 @@ static void my_tasklist_class_init (MyTasklistClass *klass)
 
 static void my_tasklist_init (MyTasklist *tasklist)
 {
+	int dv, dr;
+	
 	tasklist->tasks = NULL;
 	tasklist->skipped_windows = NULL;
 	
@@ -362,6 +364,8 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	tasklist->right_attach=1;		
 	tasklist->top_attach=0;		
 	tasklist->bottom_attach=1;
+	
+	
 	
 	tasklist->table = gtk_table_new (3, TABLE_COLUMNS, TRUE);
 	gtk_container_add (GTK_CONTAINER(tasklist), tasklist->table);
@@ -376,7 +380,7 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	
 	tasklist->composited = gdk_screen_is_composited (tasklist->gdk_screen);
 	
-	int dv, dr;
+	
 	XDamageQueryExtension (tasklist->dpy, &dv, &dr);
 	gdk_x11_register_standard_event_type (gdk_screen_get_display (tasklist->gdk_screen),
 		dv, dv + XDamageNotify);
@@ -399,7 +403,7 @@ static void my_tasklist_init (MyTasklist *tasklist)
 
 }
 
-GtkWidget* my_tasklist_new (void)
+GtkWidget* lightdash_window_switcher_new (void)
 {
 	return GTK_WIDGET(g_object_new (my_tasklist_get_type (), NULL));
 }
@@ -680,13 +684,14 @@ void lightdash_window_switcher_button_check_allocate_signal
 void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 	GdkRectangle *allocation, LightTask *task)
 {
+	gfloat factor;
+	cairo_t *cr;
+	
 	if (task->pixmap && g_signal_handler_is_connected (task->icon, task->button_resized_tag))
 	{
 		g_signal_handler_disconnect (task->icon, task->button_resized_tag);
 		
-		gfloat factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
-		
-		cairo_t *cr;
+		factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
 		
 		g_object_unref (task->gdk_pixmap);
 		
@@ -761,8 +766,9 @@ lightdash_window_switcher_get_window_picture (LightTask *task)
 static void lightdash_window_event (GdkXEvent *xevent, GdkEvent *event, LightTask *task)
 {
 	int dv, dr;
+	XEvent *ev;
 	XDamageQueryExtension (task->tasklist->dpy, &dv, &dr);
-	XEvent *ev = (XEvent*)xevent;
+	ev = (XEvent*)xevent;
 	//XEvent ev;
 	//XNextEvent (task->tasklist->dpy, &ev);
 	if (ev->type == dv + XDamageNotify)
@@ -773,6 +779,9 @@ static void lightdash_window_event (GdkXEvent *xevent, GdkEvent *event, LightTas
 }
 static void light_task_create_widgets (LightTask *task)
 {
+	XRenderPictFormat *format;
+	cairo_t *cr;
+	
 	static const GtkTargetEntry targets [] = { {"application/x-wnck-window-id",0,0} };
 	
 	task->label = gtk_label_new (wnck_window_get_name (task->window));
@@ -796,7 +805,9 @@ static void light_task_create_widgets (LightTask *task)
 		{
 			lightdash_window_switcher_get_window_picture (task);
 			
-			XRenderPictFormat *format = None;
+			
+			format = None;
+			
 			if (task->attr.depth == 32)
 			{
 				format = XRenderFindStandardFormat (task->tasklist->dpy, 0);
@@ -806,7 +817,7 @@ static void light_task_create_widgets (LightTask *task)
 				format = XRenderFindStandardFormat (task->tasklist->dpy, 1);
 			}
 				
-			cairo_t *cr;
+			
 
 			task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width/3, task->attr.height/3, 24);
 			
@@ -841,7 +852,7 @@ static void light_task_create_widgets (LightTask *task)
 			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
 			
 
-			gdk_window_add_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);
+			//gdk_window_add_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);
 		}
 		
 		

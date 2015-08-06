@@ -39,8 +39,8 @@ int main (int argc, char *argv[])
 	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	g_signal_connect (window, "destroy", G_CALLBACK (gtk_main_quit), NULL);
 	
-	gtk_window_set_skip_taskbar_hint (GTK_WINDOW (window), TRUE);
-	tasklist = my_tasklist_new ();
+	//gtk_window_set_skip_taskbar_hint (GTK_WINDOW (window), TRUE);
+	tasklist = lightdash_window_switcher_new ();
 	pager = wnck_pager_new (NULL);
 	button= gtk_button_new ();
 	
