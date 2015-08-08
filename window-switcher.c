@@ -95,6 +95,7 @@ struct _LightTask
 	guint state_changed_tag;
 	guint button_resized_tag;
 	guint button_resized_check_tag;
+	guint expose_tag;
 	
 	XWindowAttributes attr;
 	
@@ -729,7 +730,39 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		
 		
 	}	
-}		
+}
+
+gboolean lightdash_window_switcher_icon_expose (GtkWidget *widget, GdkEvent *event, LightTask *task)
+{
+	
+	gfloat factor;
+	cairo_t *cr;
+	
+	factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
+		
+		g_object_unref (task->gdk_pixmap);
+		
+		task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width*factor, task->attr.height*factor, 24);
+
+		cr = gdk_cairo_create (task->gdk_pixmap);
+		
+		cairo_scale (cr, factor, factor);
+
+		cairo_rectangle (cr, 0, 0, task->attr.width, task->attr.height);
+			
+		cairo_set_source_surface (cr, task->surface, 0, 0);
+			
+		cairo_fill (cr);
+		
+		gtk_image_set_from_pixmap (GTK_IMAGE (task->icon), task->gdk_pixmap, NULL);
+		
+		cairo_destroy (cr);
+		
+		g_signal_handler_disconnect (task->icon, task->expose_tag);
+		
+		return FALSE;
+}
+			
 
 static void my_tasklist_drag_begin_handl
 (GtkWidget *widget, GdkDragContext *context, LightTask *task)
@@ -901,8 +934,13 @@ static void light_task_create_widgets (LightTask *task)
 	task->state_changed_tag = g_signal_connect (task->window, "state-changed",
 					G_CALLBACK (my_tasklist_window_state_changed), task->tasklist);				
 					
+					
 	if (!wnck_window_is_minimized (task->window))
 	{
+		task->expose_tag = g_signal_connect (task->icon, "expose-event",
+							G_CALLBACK (lightdash_window_switcher_icon_expose),
+							task);
+		
 		task->button_resized_check_tag = g_signal_connect (task->icon, "size-allocate",
 							G_CALLBACK (lightdash_window_switcher_button_check_allocate_signal),
 							task);
