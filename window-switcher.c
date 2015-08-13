@@ -50,6 +50,7 @@ static void my_tasklist_button_clicked (GtkButton *button, WnckWindow *window);
 static void my_tasklist_button_emit_click_signal (GtkButton *button, MyTasklist *tasklist);
 static void my_tasklist_free_skipped_windows (MyTasklist *tasklist);
 static int lightdash_window_switcher_xhandler_xerror (Display *dpy, XErrorEvent *e);
+//static gint my_tasklist_button_compare (gconstpointer a, gconstpointer b, MyTasklist *tasklist);
 
 
 
@@ -93,6 +94,8 @@ struct _LightTask
 	
 	gint previous_height;
 	
+	guint unique_id;
+	
 	guint name_changed_tag;
 	guint icon_changed_tag;
 	guint workspace_changed_tag;
@@ -119,6 +122,8 @@ struct _LightTaskClass
 
 G_DEFINE_TYPE (LightTask, light_task, G_TYPE_OBJECT)
 
+//Declarations with LightTasks
+
 static void light_task_finalize (GObject *object);
 
 static void my_tasklist_drag_begin_handl
@@ -139,6 +144,9 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 	GdkRectangle *allocation, LightTask *task);
 	
 gboolean lightdash_window_switcher_icon_expose (GtkWidget *widget, GdkEvent *event, LightTask *task);
+
+//****************
+
 
 static void light_task_class_init (LightTaskClass *klass)
 
@@ -227,7 +235,11 @@ static void light_task_finalize (GObject *object)
 	
 	gdk_window_remove_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);
 	
-	XFreePixmap (task->tasklist->dpy, task->pixmap);
+	if (task->pixmap != None)
+	{
+		XFreePixmap (task->tasklist->dpy, task->pixmap);
+		task->pixmap = None;
+	}
 	
 	if (task->surface)
 	{	
@@ -238,6 +250,7 @@ static void light_task_finalize (GObject *object)
 	if (task->gdk_pixmap)
 	{
 		g_object_unref (task->gdk_pixmap);
+		task->gdk_pixmap = NULL;
 	}
 	
 }
@@ -273,7 +286,20 @@ light_task_new_from_window (MyTasklist *tasklist, WnckWindow *window)
 	
 }
 
+static gint my_tasklist_button_compare (gconstpointer task_a, gconstpointer task_b, gpointer data)
+{
+	const LightTask *a = task_a;
+	const LightTask *b = task_b;
+	
+	return a->unique_id - b->unique_id;
+}
 
+static void my_tasklist_sort (MyTasklist *tasklist)
+{
+	tasklist->tasks = g_list_sort_with_data (tasklist->tasks,
+				my_tasklist_button_compare, tasklist);
+}
+			
 static void my_tasklist_window_icon_changed (WnckWindow *window, LightTask *task)
 {
 	task->pixbuf = wnck_window_get_icon (task->window);
@@ -370,6 +396,8 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	tasklist->table_columns = DEFAULT_TABLE_COLUMNS;
 	tasklist->table_rows = DEFAULT_TABLE_ROWS;
 	
+	tasklist->window_counter = 0;
+	tasklist->unique_id_counter = 0;
 	tasklist->total_buttons_area = 0;
 	tasklist->table_area = 0;
 	
@@ -515,6 +543,38 @@ my_tasklist_free_skipped_windows (MyTasklist *tasklist)
 	
 }
 
+LightTask * get_task_from_window (MyTasklist *tasklist, WnckWindow *window)
+{
+	GList *list;
+	
+	for (list = tasklist->tasks; list; list = g_list_next (list))
+		{
+			LightTask *task = (LightTask *) list->data;
+			if (task->window == window)
+			{
+				return task;
+			}
+		
+	}
+	return NULL;
+}
+
+skipped_window * get_skipped_window (MyTasklist *tasklist, WnckWindow *window)
+{
+	GList *list;
+	
+	for (list = tasklist->skipped_windows; list; list = g_list_next (list))
+		{
+			skipped_window *task = (skipped_window *) list->data;
+			if (task->window == window)
+			{
+				return task;
+			}
+		
+	}
+	return NULL;
+}
+
 static void my_tasklist_attach_widget (LightTask *task, MyTasklist *tasklist)
 {
 	gtk_table_attach_defaults (GTK_TABLE(tasklist->table), task->button, tasklist->left_attach, 
@@ -543,8 +603,8 @@ static void my_tasklist_update_windows (MyTasklist *tasklist)
 	GList *window_l;
 	WnckWindow *win;
 	
-	
 	//Table attachment values
+	tasklist->unique_id_counter = 0;
 	
 	tasklist->left_attach =0;	
 	tasklist->right_attach=1;		
@@ -642,42 +702,13 @@ static void my_tasklist_on_window_opened (WnckScreen *screen, WnckWindow *window
 						
 
 }
-LightTask * get_task (MyTasklist *tasklist, WnckWindow *window)
-{
-	GList *list;
-	
-	for (list = tasklist->tasks; list; list = g_list_next (list))
-		{
-			LightTask *task = (LightTask *) list->data;
-			if (task->window == window)
-			{
-				return task;
-			}
-		
-	}
-	return NULL;
-}
 
-skipped_window * get_skipped_window (MyTasklist *tasklist, WnckWindow *window)
-{
-	GList *list;
-	
-	for (list = tasklist->skipped_windows; list; list = g_list_next (list))
-		{
-			skipped_window *task = (skipped_window *) list->data;
-			if (task->window == window)
-			{
-				return task;
-			}
-		
-	}
-	return NULL;
-}
 
 static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window, MyTasklist *tasklist)
 {
 	LightTask *task;
 	skipped_window *skipped;
+	GList *li;
 	
 	if (wnck_window_is_skip_tasklist (window))
 	{
@@ -692,10 +723,12 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 		return;
 	}
 		
-	task = get_task (tasklist, window);
+	task = get_task_from_window (tasklist, window);
 	
 	if(task)
 	{
+				if(wnck_window_is_on_workspace(task->window, wnck_screen_get_active_workspace(tasklist->screen)))
+				tasklist->window_counter--;
 
 				if (task->button_resized_tag)
 				{
@@ -717,12 +750,33 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 				task->button = NULL;
 			}
 			
-		g_list_remove (tasklist->tasks, (gconstpointer) task);
+		tasklist->tasks = g_list_remove (tasklist->tasks, (gconstpointer) task);
 		g_object_unref (task);
+		
 		task = NULL;
+		
+		my_tasklist_sort (tasklist);
+		
+		tasklist->left_attach =0;	
+		tasklist->right_attach=1;		
+		tasklist->top_attach=0;		
+		tasklist->bottom_attach=1;
+		
+	for (li = tasklist->tasks; li != NULL; li = li->next)
+    {
+		task = (LightTask *)li->data;
+		g_print ("%s", "\n id:");
+		g_print ("%d", task->unique_id);
+		g_object_ref (task->button);
+		gtk_container_remove (GTK_CONTAINER (tasklist->table), task->button);
+		my_tasklist_attach_widget (task, tasklist);
+		g_object_unref (task->button);
+	
 	}
 	
-			
+	}
+	
+		
 	//my_tasklist_update_windows (tasklist);	
 }
 
@@ -972,6 +1026,14 @@ static void light_task_create_widgets (LightTask *task)
 	XRenderPictureAttributes pa;
 	
 	static const GtkTargetEntry targets [] = { {"application/x-wnck-window-id",0,0} };
+	
+	task->tasklist->unique_id_counter++;
+	
+	task->unique_id = task->tasklist->unique_id_counter;
+	
+	g_print ("%s", "id:");
+	g_print ("%d", task->unique_id);
+	g_print ("%s", "\n");
 	
 	task->label = gtk_label_new (wnck_window_get_name (task->window));
 	
