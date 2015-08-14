@@ -50,7 +50,7 @@ static void my_tasklist_button_clicked (GtkButton *button, WnckWindow *window);
 static void my_tasklist_button_emit_click_signal (GtkButton *button, MyTasklist *tasklist);
 static void my_tasklist_free_skipped_windows (MyTasklist *tasklist);
 static int lightdash_window_switcher_xhandler_xerror (Display *dpy, XErrorEvent *e);
-//static gint my_tasklist_button_compare (gconstpointer a, gconstpointer b, MyTasklist *tasklist);
+static gint my_tasklist_button_compare (gconstpointer a, gconstpointer b, gpointer data);
 
 
 
@@ -716,15 +716,25 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 	
 	if (wnck_window_is_skip_tasklist (window))
 	{
+		
 		skipped = get_skipped_window (tasklist, window);
 		
-		g_print ("%s", wnck_window_get_name (skipped->window));
-		g_signal_handler_disconnect (skipped->window, skipped->tag);
-		g_object_unref (skipped->window);
-		g_free (skipped);
+		if (skipped)
+		{
+			tasklist->skipped_windows = g_list_remove (tasklist->skipped_windows, 
+				(gconstpointer) skipped);		
+					
+			g_print ("%s", wnck_window_get_name (skipped->window));
+			g_signal_handler_disconnect (skipped->window, skipped->tag);
+			g_object_unref (skipped->window);
+			g_free (skipped);
+			skipped = NULL;
+			
+
 		
-		g_print ("%s", "free skipped window \n");
-		return;
+			g_print ("%s", "free skipped window \n");
+			return;
+		}	
 	}
 		
 	task = get_task_from_window (tasklist, window);
@@ -860,8 +870,6 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		return;
 		
 		g_signal_handler_disconnect (task->icon, task->button_resized_tag);
-		
-		
 		
 		factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
 		
