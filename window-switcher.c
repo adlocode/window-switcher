@@ -145,6 +145,10 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 	
 gboolean lightdash_window_switcher_icon_expose (GtkWidget *widget, GdkEvent *event, LightTask *task);
 
+LightTask * get_task_from_window (MyTasklist *tasklist, WnckWindow *window);
+
+skipped_window * get_skipped_window (MyTasklist *tasklist, WnckWindow *window);
+
 //****************
 
 
@@ -727,22 +731,22 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 	
 	if(task)
 	{
-				if(wnck_window_is_on_workspace(task->window, wnck_screen_get_active_workspace(tasklist->screen)))
-				tasklist->window_counter--;
+			if(wnck_window_is_on_workspace(task->window, wnck_screen_get_active_workspace(tasklist->screen)))
+			tasklist->window_counter--;
 
-				if (task->button_resized_tag)
-				{
+			if (task->button_resized_tag)
+			{
 				g_signal_handler_disconnect (task->icon,
 							task->button_resized_tag);
 				task->button_resized_tag = 0;
-				}
+			}
 	
-				if (task->button_resized_check_tag)
-				{
-					g_signal_handler_disconnect (task->icon,
+			if (task->button_resized_check_tag)
+			{
+				g_signal_handler_disconnect (task->icon,
 								task->button_resized_check_tag);
-					task->button_resized_check_tag = 0;
-				}
+				task->button_resized_check_tag = 0;
+			}
 			
 			if (task->button)
 			{	
@@ -750,30 +754,35 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 				task->button = NULL;
 			}
 			
-		tasklist->tasks = g_list_remove (tasklist->tasks, (gconstpointer) task);
-		g_object_unref (task);
+			tasklist->tasks = g_list_remove (tasklist->tasks, (gconstpointer) task);
+			g_object_unref (task);
+			task = NULL;
 		
-		task = NULL;
+			my_tasklist_sort (tasklist);
 		
-		my_tasklist_sort (tasklist);
+			tasklist->left_attach =0;	
+			tasklist->right_attach=1;		
+			tasklist->top_attach=0;		
+			tasklist->bottom_attach=1;
 		
-		tasklist->left_attach =0;	
-		tasklist->right_attach=1;		
-		tasklist->top_attach=0;		
-		tasklist->bottom_attach=1;
-		
-	for (li = tasklist->tasks; li != NULL; li = li->next)
-    {
-		task = (LightTask *)li->data;
-		g_print ("%s", "\n id:");
-		g_print ("%d", task->unique_id);
-		g_object_ref (task->button);
-		gtk_container_remove (GTK_CONTAINER (tasklist->table), task->button);
-		my_tasklist_attach_widget (task, tasklist);
-		g_object_unref (task->button);
+			for (li = tasklist->tasks; li != NULL; li = li->next)
+			{
+				task = (LightTask *)li->data;
+				g_print ("%s", "\n id:");
+				g_print ("%d", task->unique_id);
+				if (wnck_window_is_on_workspace (task->window, wnck_screen_get_active_workspace (tasklist->screen)))
+				{
+					g_object_ref (task->button);
+					gtk_container_remove (GTK_CONTAINER (tasklist->table), task->button);
+					
+					my_tasklist_attach_widget (task, tasklist);
+					g_object_unref (task->button);
+				}
+				
+				
 	
-	}
-	
+			}
+		gtk_table_resize (GTK_TABLE(tasklist->table), tasklist->table_rows, tasklist->table_columns);
 	}
 	
 		
@@ -855,7 +864,7 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		
 		
 		factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
-
+		
 		
 		g_object_unref (task->gdk_pixmap);
 		
@@ -1063,8 +1072,7 @@ static void light_task_create_widgets (LightTask *task)
 			
 			format = None;
 			
-			format = XRenderFindVisualFormat (task->tasklist->dpy, task->attr.visual);
-				
+			format = XRenderFindVisualFormat (task->tasklist->dpy, task->attr.visual);	
 			
 			pa.subwindow_mode = IncludeInferiors;
 			task->gdk_pixmap = gdk_pixmap_new (NULL, 5, 5, 24);
@@ -1074,9 +1082,12 @@ static void light_task_create_widgets (LightTask *task)
 			//task->picture = XRenderCreatePicture (task->tasklist->dpy, task->pixmap,
 				//format, CPSubwindowMode, &pa);
 				
+			//task->picture = XRenderCreatePicture (task->tasklist->dpy, task->pixmap,
+				//format, None, None);
+				
 			//XRenderComposite (task->tasklist->dpy, PictOpSrc, task->picture, None,
 				//task->gdk_pixmap, 0, 0, 0, 0, 0, 0, task->attr.width, task->attr.height);
-			
+
 			task->surface = cairo_xlib_surface_create_with_xrender_format (task->tasklist->dpy,
 				task->pixmap,
 				task->attr.screen,
