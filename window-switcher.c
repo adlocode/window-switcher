@@ -386,7 +386,32 @@ static void my_tasklist_class_init (MyTasklistClass *klass)
 		G_TYPE_NONE, 0);
 	
 }
-
+static void lightdash_window_switcher_realize (MyTasklist *tasklist)
+{
+	GtkWidget *parent_gtk_widget;
+	
+	parent_gtk_widget = gtk_widget_get_toplevel (GTK_WIDGET (tasklist));
+	
+	if (gtk_widget_is_toplevel (parent_gtk_widget))
+	{
+		tasklist->parent_gdk_window = gtk_widget_get_window (parent_gtk_widget);
+	}
+	
+	my_tasklist_update_windows (tasklist);
+	
+	g_signal_connect (tasklist->screen, "window-opened",
+                G_CALLBACK (my_tasklist_on_window_opened), tasklist); 
+                
+    g_signal_connect (tasklist->screen, "window-closed",
+                G_CALLBACK (my_tasklist_on_window_closed), tasklist); 
+                
+   g_signal_connect (tasklist->screen, "active-workspace-changed",
+               G_CALLBACK (my_tasklist_active_workspace_changed), tasklist);
+               
+   g_signal_connect (tasklist->gdk_screen, "composited-changed",
+               G_CALLBACK (my_tasklist_screen_composited_changed), tasklist);
+}
+	
 static void my_tasklist_init (MyTasklist *tasklist)
 {
 	int dv, dr;
@@ -394,6 +419,8 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	tasklist->tasks = NULL;
 	tasklist->skipped_windows = NULL;
 	tasklist->adjusted = FALSE;
+	
+	tasklist->parent_gdk_window = NULL;
 	
 	tasklist->update_complete = FALSE;
 	
@@ -432,19 +459,9 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	
 	wnck_screen_force_update (tasklist->screen);
 	
-	my_tasklist_update_windows (tasklist);
-	
-	g_signal_connect (tasklist->screen, "window-opened",
-                G_CALLBACK (my_tasklist_on_window_opened), tasklist); 
-                
-    g_signal_connect (tasklist->screen, "window-closed",
-                G_CALLBACK (my_tasklist_on_window_closed), tasklist); 
-                
-   g_signal_connect (tasklist->screen, "active-workspace-changed",
-               G_CALLBACK (my_tasklist_active_workspace_changed), tasklist);
-               
-   g_signal_connect (tasklist->gdk_screen, "composited-changed",
-               G_CALLBACK (my_tasklist_screen_composited_changed), tasklist);           
+	g_signal_connect (G_OBJECT (tasklist), "realize",
+                G_CALLBACK (lightdash_window_switcher_realize), tasklist);
+           
 
 }
 
@@ -793,6 +810,7 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 	
 			}
 		gtk_table_resize (GTK_TABLE(tasklist->table), tasklist->table_rows, tasklist->table_columns);
+		gtk_widget_queue_resize (GTK_WIDGET(tasklist));
 	}
 	
 		
@@ -1124,10 +1142,11 @@ static void light_task_create_widgets (LightTask *task)
 			XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
 				CompositeRedirectAutomatic);
 			
-			//task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
+			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
 			
-
-			//gdk_window_add_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);
+			if (task->gdk_window != task->tasklist->parent_gdk_window)
+			gdk_window_add_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);
+			
 		}
 		
 		else
