@@ -65,9 +65,10 @@ int main (int argc, char *argv[])
 	g_signal_connect (tasklist, "task-button-drag-begin", 
 		G_CALLBACK (drag_begin_handl), pager);
 			
+	
 	gtk_widget_show_all (window);
 	
-	gtk_widget_hide (pager);
+	//gtk_widget_hide (pager);
 	
 	gtk_main();
 	

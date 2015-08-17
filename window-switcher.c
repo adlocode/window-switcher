@@ -21,6 +21,7 @@
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xdamage.h>
+#include <X11/extensions/Xfixes.h>
 #include <gdk/gdkx.h>
 #include <cairo/cairo.h>
 #include <cairo/cairo-xlib.h>
@@ -73,7 +74,7 @@ struct _LightTask
 	MyTasklist *tasklist;
 	
 	GtkWidget *button;
-	GtkWidget *icon;
+	GtkWidget *image;
 	GtkWidget *label;
 	GtkWidget *vbox;
 	
@@ -85,6 +86,8 @@ struct _LightTask
 	
 	Pixmap pixmap;
 	Picture picture;
+	
+	gboolean preview_created;
 	
 	GdkPixmap *gdk_pixmap;
 	
@@ -149,6 +152,8 @@ LightTask * get_task_from_window (MyTasklist *tasklist, WnckWindow *window);
 
 skipped_window * get_skipped_window (MyTasklist *tasklist, WnckWindow *window);
 
+void lightdash_window_switcher_update_preview (LightTask *task, gint width, gint height, gboolean resize);
+
 //****************
 
 
@@ -171,18 +176,18 @@ static void light_task_finalize (GObject *object)
 	LightTask *task;
 	task = LIGHT_TASK (object);
 	
-	if (task->icon)
+	if (task->image)
 	{
 		if (task->button_resized_tag)
 		{
-			g_signal_handler_disconnect (task->icon,
+			g_signal_handler_disconnect (task->image,
 							task->button_resized_tag);
 			task->button_resized_tag = 0;
 		}
 	
 		if (task->button_resized_check_tag)
 		{
-			g_signal_handler_disconnect (task->icon,
+			g_signal_handler_disconnect (task->image,
 							task->button_resized_check_tag);
 			task->button_resized_check_tag = 0;
 		}
@@ -192,7 +197,7 @@ static void light_task_finalize (GObject *object)
 	{
 		gtk_widget_destroy (task->button);
 		task->button = NULL;
-		task->icon = NULL;
+		task->image = NULL;
 		task->label = NULL;
 	}
 	
@@ -283,6 +288,8 @@ light_task_new_from_window (MyTasklist *tasklist, WnckWindow *window)
 	
 	task->gdk_pixmap = NULL;
 	
+	task->preview_created = FALSE;
+	
 	light_task_create_widgets (task);
 	
 		
@@ -306,8 +313,18 @@ static void my_tasklist_sort (MyTasklist *tasklist)
 			
 static void my_tasklist_window_icon_changed (WnckWindow *window, LightTask *task)
 {
+	
 	task->pixbuf = wnck_window_get_icon (task->window);
-	gtk_image_set_from_pixbuf (GTK_IMAGE(task->icon), task->pixbuf);
+	
+	if (task->tasklist->composited)
+	{
+		if (wnck_window_is_minimized (task->window))
+			gtk_image_set_from_pixbuf (GTK_IMAGE(task->image), task->pixbuf);
+		return;
+	}
+	
+	gtk_image_set_from_pixbuf (GTK_IMAGE(task->image), task->pixbuf);
+	
 }
 
 
@@ -397,6 +414,8 @@ static void lightdash_window_switcher_realize (MyTasklist *tasklist)
 		tasklist->parent_gdk_window = gtk_widget_get_window (parent_gtk_widget);
 	}
 	
+
+	
 	my_tasklist_update_windows (tasklist);
 	
 	g_signal_connect (tasklist->screen, "window-opened",
@@ -453,6 +472,13 @@ static void my_tasklist_init (MyTasklist *tasklist)
 	tasklist->composited = gdk_screen_is_composited (tasklist->gdk_screen);
 	
 	
+			for (int i = 0; i < ScreenCount (tasklist->dpy); i++)
+	{
+		XCompositeRedirectSubwindows (tasklist->dpy, RootWindow (tasklist->dpy, i),
+			CompositeRedirectAutomatic);
+	}
+	
+	
 	XDamageQueryExtension (tasklist->dpy, &dv, &dr);
 	gdk_x11_register_standard_event_type (gdk_screen_get_display (tasklist->gdk_screen),
 		dv, dv + XDamageNotify);
@@ -500,18 +526,18 @@ my_tasklist_free_tasks (MyTasklist *tasklist)
 			
 			l = l->next;
 			
-			if (task->icon)
+			if (task->image)
 			{
 				if (task->button_resized_tag)
 				{
-				g_signal_handler_disconnect (task->icon,
+				g_signal_handler_disconnect (task->image,
 							task->button_resized_tag);
 				task->button_resized_tag = 0;
 				}
 	
 				if (task->button_resized_check_tag)
 				{
-					g_signal_handler_disconnect (task->icon,
+					g_signal_handler_disconnect (task->image,
 								task->button_resized_check_tag);
 					task->button_resized_check_tag = 0;
 				}
@@ -763,14 +789,14 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 
 			if (task->button_resized_tag)
 			{
-				g_signal_handler_disconnect (task->icon,
+				g_signal_handler_disconnect (task->image,
 							task->button_resized_tag);
 				task->button_resized_tag = 0;
 			}
 	
 			if (task->button_resized_check_tag)
 			{
-				g_signal_handler_disconnect (task->icon,
+				g_signal_handler_disconnect (task->image,
 								task->button_resized_check_tag);
 				task->button_resized_check_tag = 0;
 			}
@@ -864,43 +890,39 @@ static void my_tasklist_button_emit_click_signal (GtkButton *button, MyTasklist 
 void lightdash_window_switcher_button_check_allocate_signal 
 	(GtkWidget *widget, GdkRectangle *allocation, LightTask *task)
 {
-	if (!g_signal_handler_is_connected (task->icon, task->button_resized_tag))
+	if (!g_signal_handler_is_connected (task->image, task->button_resized_tag))
 	{
-		task->button_resized_tag = g_signal_connect (task->icon, "size-allocate",
+		task->button_resized_tag = g_signal_connect (task->image, "size-allocate",
 							G_CALLBACK (lightdash_window_switcher_button_size_changed),
 							task);
 	}
 }
-
-void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
-	GdkRectangle *allocation, LightTask *task)
+void lightdash_window_switcher_update_preview (LightTask *task, gint width, gint height, gboolean resize)
 {
-	gfloat factor;
-	gfloat aspect_ratio;
-	cairo_t *cr;
-	gfloat total_buttons_area, table_area;
-	
-	
-	
-	if (task->pixmap && g_signal_handler_is_connected (task->icon, task->button_resized_tag))
-	{
-		if (task->icon->allocation.height == task->previous_height)
-		return;
+		gfloat factor;
+		cairo_t *cr;
 		
-		g_signal_handler_disconnect (task->icon, task->button_resized_tag);
+		if (!resize)
+		{
+			width = task->attr.width;
+			height = task->attr.height;
+		}
 		
-		factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
+		factor = (gfloat)task->image->allocation.height/(gfloat)height;
 		
 		
 		g_object_unref (task->gdk_pixmap);
 		
-		task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width*factor, task->attr.height*factor, 24);
+		task->gdk_pixmap = gdk_pixmap_new (NULL, 
+			width*factor, 
+			height*factor, 
+			24);
 
 		cr = gdk_cairo_create (task->gdk_pixmap);
 		
 		cairo_scale (cr, factor, factor);
 
-		cairo_rectangle (cr, 0, 0, task->attr.width, task->attr.height);
+		cairo_rectangle (cr, 0, 0, width, height);
 			
 		cairo_set_source_surface (cr, task->surface, 0, 0);
 		
@@ -908,9 +930,27 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 			
 		cairo_fill (cr);
 		
-		gtk_image_set_from_pixmap (GTK_IMAGE (task->icon), task->gdk_pixmap, NULL);
+		gtk_image_set_from_pixmap (GTK_IMAGE (task->image), task->gdk_pixmap, NULL);
 		
 		cairo_destroy (cr);
+}
+	
+void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
+	GdkRectangle *allocation, LightTask *task)
+{
+	
+	gfloat total_buttons_area, table_area;
+	gfloat aspect_ratio;
+	
+	
+	if (task->pixmap && g_signal_handler_is_connected (task->image, task->button_resized_tag))
+	{
+		if (task->image->allocation.height == task->previous_height)
+		return;
+		
+		g_signal_handler_disconnect (task->image, task->button_resized_tag);
+		
+		lightdash_window_switcher_update_preview (task, 0, 0, FALSE);
 		
 		if (task->button->allocation.height)
 		aspect_ratio = (gfloat)task->button->allocation.width/(gfloat)task->button->allocation.height;
@@ -927,10 +967,12 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		
 		
 			
-		total_buttons_area = (gfloat)task->button->allocation.width * (gfloat)task->button->allocation.height
+		total_buttons_area = (gfloat)task->button->allocation.width 
+			* (gfloat)task->button->allocation.height
 			* (gfloat)task->tasklist->window_counter;
 			
-		table_area = (gfloat)task->tasklist->table->allocation.width * (gfloat)task->tasklist->table->allocation.height;	
+		table_area = (gfloat)task->tasklist->table->allocation.width 
+			* (gfloat)task->tasklist->table->allocation.height;	
 		
 		g_print ("%s", wnck_window_get_name (task->window));
 		g_print ("%s", " ");
@@ -949,7 +991,7 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 				
 			}
 		
-		task->previous_height = task->icon->allocation.height;
+		task->previous_height = task->image->allocation.height;
 		
 	}	
 }
@@ -957,35 +999,17 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 gboolean lightdash_window_switcher_icon_expose (GtkWidget *widget, GdkEvent *event, LightTask *task)
 {
 	
-	gfloat factor;
-	cairo_t *cr;
 	
-	
-		factor = (gfloat)task->icon->allocation.height/(gfloat)task->attr.height;
+		lightdash_window_switcher_update_preview (task, 0, 0, FALSE);
 		
-		g_object_unref (task->gdk_pixmap);
+		gtk_image_set_from_pixmap (GTK_IMAGE (task->image), task->gdk_pixmap, NULL);
 		
-		task->gdk_pixmap = gdk_pixmap_new (NULL, task->attr.width*factor, task->attr.height*factor, 24);
-
-		cr = gdk_cairo_create (task->gdk_pixmap);
 		
-		cairo_scale (cr, factor, factor);
-
-		cairo_rectangle (cr, 0, 0, task->attr.width, task->attr.height);
-			
-		cairo_set_source_surface (cr, task->surface, 0, 0);
+		g_signal_handler_disconnect (task->image, task->expose_tag);
 		
-		cairo_pattern_set_filter (cairo_get_source (cr), CAIRO_FILTER_FAST);
-			
-		cairo_fill (cr);
+		task->previous_height = task->image->allocation.height;
 		
-		gtk_image_set_from_pixmap (GTK_IMAGE (task->icon), task->gdk_pixmap, NULL);
-		
-		cairo_destroy (cr);
-		
-		g_signal_handler_disconnect (task->icon, task->expose_tag);
-		
-		task->previous_height = task->icon->allocation.height;
+		task->preview_created = TRUE;
 		
 		return FALSE;
 }
@@ -1043,26 +1067,46 @@ static void lightdash_window_event (GdkXEvent *xevent, GdkEvent *event, LightTas
 {
 	int dv, dr;
 	XEvent *ev;
+	XDamageNotifyEvent *e;
+	XConfigureEvent *ce;
 	XDamageQueryExtension (task->tasklist->dpy, &dv, &dr);
 	
 	ev = (XEvent*)xevent;
-	//XEvent ev;
-	//XNextEvent (task->tasklist->dpy, &ev);
-	if (ev->type == dv + XDamageNotify)
+	e = (XDamageNotifyEvent *)ev;
+	
+	if (ev->type == dv + XDamageNotify && task->preview_created)
 	{
-	//g_print ("%s", "event");
-	//gtk_image_set_from_pixmap (task->icon, task->gdk_pixmap, NULL);
+	
+	XDamageSubtract (task->tasklist->dpy, e->damage, None, None);
+	
+	lightdash_window_switcher_update_preview (task, 0, 0, FALSE);
+	
 	}
+	else if (ev->type == ConfigureNotify && task->preview_created)
+	{
+		ce = &ev->xconfigure;
+		
+		if (ce->height == task->attr.height || ce->width == task->attr.width)
+			return;
+			
+		g_print ("%s", "configure");
+		
+		lightdash_window_switcher_update_preview (task, ce->width, ce->height, TRUE);
+	}
+	
+	
 }
 static void light_task_create_widgets (LightTask *task)
 {
 	XRenderPictFormat *format;
 	//cairo_t *cr;
-	XRenderPictureAttributes pa;
+	//XRenderPictureAttributes pa;
 	
 	static const GtkTargetEntry targets [] = { {"application/x-wnck-window-id",0,0} };
 	
 	task->tasklist->unique_id_counter++;
+	
+	task->gdk_pixmap = NULL;
 	
 	task->unique_id = task->tasklist->unique_id_counter;
 	
@@ -1100,8 +1144,9 @@ static void light_task_create_widgets (LightTask *task)
 			
 			format = XRenderFindVisualFormat (task->tasklist->dpy, task->attr.visual);	
 			
-			pa.subwindow_mode = IncludeInferiors;
+			//pa.subwindow_mode = IncludeInferiors;
 			task->gdk_pixmap = gdk_pixmap_new (NULL, 5, 5, 24);
+			
 			
 			//cr = gdk_cairo_create (task->gdk_pixmap);
 			
@@ -1115,7 +1160,7 @@ static void light_task_create_widgets (LightTask *task)
 				//task->gdk_pixmap, 0, 0, 0, 0, 0, 0, task->attr.width, task->attr.height);
 
 			task->surface = cairo_xlib_surface_create_with_xrender_format (task->tasklist->dpy,
-				task->pixmap,
+				task->xid,
 				task->attr.screen,
 				format,
 				task->attr.width,
@@ -1133,32 +1178,36 @@ static void light_task_create_widgets (LightTask *task)
 			//cairo_fill (cr);
 			
 					
-			task->icon = gtk_image_new_from_pixmap (task->gdk_pixmap, NULL);
+			task->image = gtk_image_new_from_pixmap (task->gdk_pixmap, NULL);
 			
 			
 			
 			//cairo_destroy (cr);
 			
-			XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
-				CompositeRedirectAutomatic);
+			//XCompositeUnredirectWindow (task->tasklist->dpy, task->xid,
+				//CompositeRedirectAutomatic);
 			
-			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportNonEmpty);
 			
-			if (task->gdk_window != task->tasklist->parent_gdk_window)
+			task->damage = XDamageCreate (task->tasklist->dpy, task->xid, XDamageReportDeltaRectangles);
+			XDamageSubtract (task->tasklist->dpy, task->damage, None, None);
+			
+			if (task->tasklist->parent_gdk_window && task->gdk_window != task->tasklist->parent_gdk_window)
 			gdk_window_add_filter (task->gdk_window, (GdkFilterFunc) lightdash_window_event, task);
+			
+			
 			
 		}
 		
 		else
 		{
-			task->icon = gtk_image_new_from_pixbuf (task->pixbuf);
+			task->image = gtk_image_new_from_pixbuf (task->pixbuf);
 			
 		}
 	}
 		
 		else
 		{
-			task->icon = gtk_image_new_from_pixbuf (task->pixbuf);
+			task->image = gtk_image_new_from_pixbuf (task->pixbuf);
 			
 		}
 	
@@ -1166,10 +1215,10 @@ static void light_task_create_widgets (LightTask *task)
 	gtk_button_set_relief (GTK_BUTTON (task->button), GTK_RELIEF_NONE);
 	gtk_label_set_ellipsize(GTK_LABEL(task->label),PANGO_ELLIPSIZE_END);
 	gtk_container_add (GTK_CONTAINER(task->button),task->vbox);
-	gtk_box_pack_start (GTK_BOX (task->vbox), task->icon, TRUE, TRUE, 0);
+	gtk_box_pack_start (GTK_BOX (task->vbox), task->image, TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (task->vbox), task->label, FALSE, TRUE, 0);
 	//gtk_widget_set_size_request (task->button, 200, 80);
-	//gtk_widget_set_size_request (task->icon, 80, 80);
+	//gtk_widget_set_size_request (task->image, 80, 80);
 	
 	task->icon_changed_tag = g_signal_connect (task->window, "icon-changed",
 					G_CALLBACK (my_tasklist_window_icon_changed), task);
@@ -1186,15 +1235,15 @@ static void light_task_create_widgets (LightTask *task)
 					
 	if (!wnck_window_is_minimized (task->window))
 	{
-		task->expose_tag = g_signal_connect (task->icon, "expose-event",
+		task->expose_tag = g_signal_connect (task->image, "expose-event",
 							G_CALLBACK (lightdash_window_switcher_icon_expose),
 							task);
 		
-		task->button_resized_check_tag = g_signal_connect (task->icon, "size-allocate",
+		task->button_resized_check_tag = g_signal_connect (task->image, "size-allocate",
 							G_CALLBACK (lightdash_window_switcher_button_check_allocate_signal),
 							task);
 							
-		task->button_resized_tag = g_signal_connect (task->icon, "size-allocate",
+		task->button_resized_tag = g_signal_connect (task->image, "size-allocate",
 							G_CALLBACK (lightdash_window_switcher_button_size_changed),
 							task);
 	}
