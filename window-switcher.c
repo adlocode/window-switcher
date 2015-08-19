@@ -181,7 +181,7 @@ static void light_task_finalize (GObject *object)
 	{
 		if (task->button_resized_tag)
 		{
-			g_signal_handler_disconnect (task->image,
+			g_signal_handler_disconnect (task->button,
 							task->button_resized_tag);
 			task->button_resized_tag = 0;
 		}
@@ -272,6 +272,8 @@ light_task_new_from_window (MyTasklist *tasklist, WnckWindow *window)
 	task->window = g_object_ref (window);
 	
 	task->button_resized_tag = 0;
+	
+	task->expose_tag = 0;
 	
 	task->xid = wnck_window_get_xid (window);
 	
@@ -523,7 +525,7 @@ my_tasklist_free_tasks (MyTasklist *tasklist)
 			{
 				if (task->button_resized_tag)
 				{
-				g_signal_handler_disconnect (task->image,
+				g_signal_handler_disconnect (task->button,
 							task->button_resized_tag);
 				task->button_resized_tag = 0;
 				}
@@ -776,7 +778,7 @@ static void my_tasklist_on_window_closed (WnckScreen *screen, WnckWindow *window
 
 			if (task->button_resized_tag)
 			{
-				g_signal_handler_disconnect (task->image,
+				g_signal_handler_disconnect (task->button,
 							task->button_resized_tag);
 				task->button_resized_tag = 0;
 			}
@@ -929,7 +931,6 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 			&& task->image->allocation.width == task->previous_width)
 		return;
 		
-		
 		lightdash_window_switcher_update_preview (task, task->attr.height, task->image->allocation.height);
 		
 		gdk_pixmap_get_size (task->gdk_pixmap, &pixmap_width, NULL);
@@ -937,7 +938,6 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		
 		if (task->image->allocation.width < pixmap_width)
 		lightdash_window_switcher_update_preview (task, task->attr.width, task->image->allocation.width);
-		
 
 		
 		if (task->button->allocation.height)
@@ -962,10 +962,10 @@ void lightdash_window_switcher_button_size_changed (GtkWidget *widget,
 		table_area = (gfloat)task->tasklist->table->allocation.width 
 			* (gfloat)task->tasklist->table->allocation.height;	
 		
-		g_print ("%s", wnck_window_get_name (task->window));
-		g_print ("%s", " ");
-		g_print ("%f", total_buttons_area / table_area);
-		g_print ("%s", " ");	
+		//g_print ("%s", wnck_window_get_name (task->window));
+		//g_print ("%s", " ");
+		//g_print ("%f", total_buttons_area / table_area);
+		//g_print ("%s", " ");	
 				
 
 		
@@ -1001,8 +1001,9 @@ gboolean lightdash_window_switcher_image_expose (GtkWidget *widget, GdkEvent *ev
 		
 		gtk_image_set_from_pixmap (GTK_IMAGE (task->image), task->gdk_pixmap, NULL);
 		
-		
+		if (task->expose_tag)
 		g_signal_handler_disconnect (task->image, task->expose_tag);
+		task->expose_tag = 0;
 		
 		task->previous_height = task->image->allocation.height;
 		task->previous_width = task->image->allocation.width;
