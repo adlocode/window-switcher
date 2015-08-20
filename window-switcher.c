@@ -881,20 +881,28 @@ void lightdash_window_switcher_button_check_allocate_signal
 }
 void lightdash_window_switcher_update_preview (LightTask *task, gfloat original_length, gfloat new_length)
 {
+		gint width, height;
 		gfloat factor;
 		cairo_t *cr;
 		
-		
 		factor = (gfloat)new_length/(gfloat)original_length;
 		
+		width = task->attr.width*factor;
+		height = task->attr.height*factor;
 		
 		g_object_unref (task->gdk_pixmap);
 		
+		if ((gint)width == 0 || (gint)height == 0)
+		{
+			width = 1;
+			height = 1;
+		}
+		
 		task->gdk_pixmap = gdk_pixmap_new (NULL, 
-			task->attr.width*factor, 
-			task->attr.height*factor, 
+			width, 
+			height, 
 			24);
-
+			
 		cr = gdk_cairo_create (task->gdk_pixmap);
 		
 		cairo_scale (cr, factor, factor);
@@ -1155,7 +1163,7 @@ static void light_task_create_widgets (LightTask *task)
 			format = XRenderFindVisualFormat (task->tasklist->dpy, task->attr.visual);	
 			
 			//pa.subwindow_mode = IncludeInferiors;
-			task->gdk_pixmap = gdk_pixmap_new (NULL, 5, 5, 24);
+			task->gdk_pixmap = gdk_pixmap_new (NULL, 1, 1, 24);
 			
 			
 			//cr = gdk_cairo_create (task->gdk_pixmap);

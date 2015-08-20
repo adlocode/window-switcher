@@ -38,6 +38,8 @@ int main (int argc, char *argv[])
 	
 	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	g_signal_connect (window, "destroy", G_CALLBACK (gtk_main_quit), NULL);
+	gtk_widget_set_size_request (window, 10, 10);
+	gtk_window_resize (GTK_WINDOW (window), 200, 200);
 	
 	//gtk_window_set_skip_taskbar_hint (GTK_WINDOW (window), TRUE);
 	tasklist = lightdash_window_switcher_new ();
@@ -53,10 +55,10 @@ int main (int argc, char *argv[])
 		
 	
 	gtk_widget_set_size_request (pager, 100, 100);
-	gtk_widget_set_size_request (tasklist, 500, 400);
+	
 	gtk_widget_set_size_request (button, 20, 20);
 	
-	hbox = gtk_hbox_new (FALSE, 0);
+	hbox = gtk_vbox_new (FALSE, 0);
 	gtk_container_add (GTK_CONTAINER(window), hbox);
 	gtk_box_pack_start (GTK_BOX (hbox), tasklist, TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 0);
