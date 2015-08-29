@@ -58,6 +58,7 @@ struct _MyTasklist
 	GList *skipped_windows;
 	
 	guint window_counter;
+	guint last_position;
 	guint unique_id_counter;
 	
 	guint total_buttons_area;
