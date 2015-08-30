@@ -1006,8 +1006,8 @@ gboolean lightdash_window_switcher_image_expose (GtkWidget *widget, GdkEvent *ev
 
 		gdk_pixmap_get_size (task->gdk_pixmap, &pixmap_width, NULL);
 		
-		if (task->image->allocation.width < pixmap_width)
-		lightdash_window_switcher_update_preview (task, task->image->allocation.width, task->image->allocation.height);
+		//if (task->image->allocation.width < pixmap_width)
+		//lightdash_window_switcher_update_preview (task, task->image->allocation.width, task->image->allocation.height);
 		
 		gtk_image_set_from_pixmap (GTK_IMAGE (task->image), task->gdk_pixmap, NULL);
 		
